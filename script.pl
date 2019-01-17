@@ -1,6 +1,6 @@
 #!/usr/bin/perl
 
-print "1";
+print "2";
 my $outputFile = "./output.txt";
 open OUTPUTFILE, ">$outputFile" or die "Can't open $outputFile for writing - $! \n";
 
