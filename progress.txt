@@ -1,0 +1,145 @@
+Ubuntu and docker already installed.
+
+
+Started off following https://blog.nimbleci.com/2016/08/31/how-to-build-docker-images-automatically-with-jenkins-pipeline/
+
+Got to the bit about "Creating the Jenkinsfile" and realised it was written for an audience who was more familiar with the terminology than I am ...
+
+So... switched to https://jenkins.io/doc/pipeline/tour/hello-world/ as more suitable to start with
+
+ClassNotFoundException: jenkins.scm.RunWithSCM
+It turns out that ignoring the "You might have dependency problems" warnings I saw earlier wasn't a good idea.
+So, went back to the original blog post, and instead of 
+$ docker run -d --name jenkins -p 8080:8080 jenkins:2.7.2
+ran
+$ docker run -d --name jenkins -p 8080:8080 jenkins
+
+Blog post may be a little outdated - at least in terms of version number. It also looks like Pipeline is now a standard plugin?
+
+First "latest" build failed to install the "standard" plugins - esp. Pipeline,
+so 
+docker rmi jenkins and start again
+
+No joy again - initial "standard" plugins failed to load - guess I'll have to actually troubleshoot it this time...
+"You must update Jenkins from v2.60.3 to v2.62 or later to run this plugin."
+
+Aha - you couldn't make this stuff up...
+From https://hub.docker.com/_/jenkins/ :
+The images found here will receive no further updates after LTS 2.60.x. Please adjust your usage accordingly.
+
+right.... back to square one.
+docker run -d --name jenkins -p 8080:8080 jenkins/jenkins:lts
+
+2.150.2 now running
+
+Multi-Branch pipeline
+
+
+Created a MB Pipeline fine. All it's doing is the hello-world from the above link.
+Error comes out :
+	docker: not found
+Seems I'm not running Docker in Privileged mode.
+
+docker run --privileged -d --name jenkins --privileged -p 8080:8080 jenkins/jenkins:lts
+
+Nope - apparently that's not quite good enough when dealing specifically with the docker command...
+
+docker run --privileged -v /var/run/docker.sock:/var/run/docker.sock -d --name jenkins --privileged -p 8080:8080 jenkins/jenkins:lts
+
+Not using a Multi-Branch this time - just Pipeline - let's start one step easier - using the Jenkinsfile script from before
+Same problem - docker not found
+docker.sock is showing in /var/run in the container , so the last command-line adjustment at least probably had an effect
+
+
+After googling around, it seems that the BlueOcean jenkins image might just be set up to cope with this ootb....
+Let's try it.
+docker run -u root --rm -p 8080:8080 -v /Dump/data/jenkinsBO-data:/var/jenkins_home -v /var/run/docker.sock:/var/run/docker.sock --name jenkinsBO  jenkinsci/blueocean
+
+Success! First Jenkins build using Docker successfully executed.
+All it did was download the docker image for maven 3.3.3, then run mvn --version
+
+I don't know why the BlueOcean image worked when the lts didn't. Especially as the important -v argument was the same.
+Something to dig into later.
+
+  
+At this point - break out to understand how to create Docker images (without jenkins)
+
+Created a Dockerfile based off of Ubuntu16.04, with a trivial perl script from git
+- Need to add the -y switch to the apt-get install commands
+- Putting in the github credentials to access a private repo is for another time, so make the repo public
+(if you want to see it, it's here: https://github.com/AndyHunt66/JenkinsTest - the only thing that's being used by this image is script.pl)
+
+Successfully built image :
+andy@ahunt09:/Dump/data/dockerJenkinsTest/Docker$ sudo docker images
+REPOSITORY                             TAG                 IMAGE ID            CREATED             SIZE
+perlubuntu                             latest              ab659a54c514        34 seconds ago      232 MB
+
+
+
+but.. I can't run it.
+After a few iterations of a basic dockerfile, I'm consistently getting "no such file or directory" 
+Originally wanted to run a trivial perl script. 
+Even with just
+CMD ["ls -las /"]
+it doesn't work.
+
+
+Ended up with this that at least works and I can run the container:
+CMD ["/bin/bash"]
+#CMD ["ls -las /"]
+CMD ["/bin/chmod +x /Dump/scripts/JenkinsTest/script.pl"]
+CMD ["/Dump/scripts/JenkinsTest/script.pl"]
+
+This gives me the following output:
+Step 8/10 : CMD /bin/bash
+ ---> Using cache
+ ---> d90b1b339013
+Step 9/10 : CMD /bin/chmod +x /Dump/scripts/JenkinsTest/script.pl
+ ---> Using cache
+ ---> 5e169650e827
+Step 10/10 : CMD /Dump/scripts/JenkinsTest/script.pl
+ ---> Using cache
+ ---> a63ea7b3add8
+Successfully built a63ea7b3add8
+
+
+I suspect that only the chmod is actually working.
+
+Not exactly sure what's going on here... 
+I'm not completely understanding the CMD command, and how it works, but I'm successfully pulling from github and chmod-ing the .pl so, the basics are there. Time to move on.
+
+
+Ok - so now to get the docker stuff into jenkins...
+
+! It seems to be working if I just give it the github location.
+To test:
+Change the perl script and commit it to github
+Schedule a scan
+Watch it build etc
+	Changes detected: master (ba76104284bafadcd769f73e22e431b5ed1c4ac6 → a84035edcb40a42cf0f36312cd54e09ec1e77546)
+
+images are in /Dump/data/jenkinsBO-data/workspace/AH_3_master
+
+The perl script that is ending up in the image is *not* changing. Test Fails.
+
+But - image is built in the place expected, and it works. 
+Fulfilling (just) the paramters of the assignment :-)
+
+Things to check next as the test is not working -
+- Is there some sort of cache in Jenkins that I have to tell it to refresh?
+ 
+
+
+
+============
+Other stuff
+============
+The gui seems a little flaky - e.g. hitting the back button almost always seems to generate an error, first time you go into creating a job it just shows "Loading" etc.
+-- interestingly, the BlueOcean image I used later on doesn't have the second problem - possibly because it restarts jenkins once you've set up the first user.
+
+
+
+With a bit of help from 
+https://www.docker.com/sites/default/files/Docker_CheatSheet_08.09.2016_0.pdf
+
+
